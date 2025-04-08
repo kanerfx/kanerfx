@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ptbr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pesquisador em Planilhas</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">
+      <img src="./img/logo.png" alt="logo" />
+    </div>
+    <div class="toggle-container">
+      <input type="checkbox" id="darkModeToggle" />
+      <label for="darkModeToggle" class="toggle-label">Modo Escuro</label>
+    </div>
+  </header>
+
+  <div class="container">
+    <h1>Pesquisa de Dados em Planilha</h1>
+    <p>Selecione um arquivo do Excel e pesquise por um número ou uma palavra específica.</p>
+    
+    <div class="file-input-container">
+      <label for="excel-file" class="custom-file-input">Selecione um arquivo .xlsx</label>
+      <input type="file" id="excel-file" accept=".xls, .xlsx" />
+    </div>
+    
+    <input type="text" id="search-input" placeholder="Digite um termo..." />
+    <button id="search-btn">Pesquisar</button>
+    
+    <div id="results"></div>
+  </div>
+
+  <script>
+    // Toggle dark mode styling.
+    document.getElementById('darkModeToggle').addEventListener('change', function() {
+      document.body.classList.toggle('dark-mode', this.checked);
+    });
+
+    let excelData = [];
+
+    // Load the Excel file and convert to JSON.
+    document.getElementById("excel-file").addEventListener("change", function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        
+        excelData = [];
+        workbook.SheetNames.forEach(function(sheetName) {
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+          excelData.push({
+            sheetName: sheetName,
+            data: jsonData
+          });
+        });
+        
+        document.getElementById("results").innerHTML =
+          "<p class='success'>Arquivo carregado com sucesso! Encontrado " +
+          workbook.SheetNames.length + " planilha(s).</p>";
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // Search, render results, and load saved checkbox states.
+    document.getElementById("search-btn").addEventListener("click", function () {
+      const term = document.getElementById("search-input").value.toLowerCase().trim();
+      let outputHtml = "";
+
+      if (excelData.length === 0) {
+        outputHtml = "<p class='error'>Por favor, selecione um arquivo primeiro!</p>";
+      } else if (!term) {
+        outputHtml = "<p class='error'>Por favor, digite um termo para pesquisa.</p>";
+      } else {
+        excelData.forEach(function (sheet) {
+          let sheetResults = [];
+          sheet.data.forEach(function (row, rowIndex) {
+            if (row.some(cell => cell != null && cell.toString().toLowerCase().includes(term))) {
+              sheetResults.push({
+                rowIndex: rowIndex,
+                rowData: row
+              });
+            }
+          });
+
+          if (sheetResults.length > 0) {
+            outputHtml += "<h2>Resultados na planilha: " + sheet.sheetName + "</h2>";
+            outputHtml += "<table><thead><tr>";
+            if (sheet.data.length > 0) {
+              for (let col = 0; col < sheet.data[0].length; col++) {
+                outputHtml += "<th>Coluna " + (col + 1) + "</th>";
+              }
+              outputHtml += "<th class='checkbox-header'>Marcar</th>"; // "Marcar" column header
+            }
+            outputHtml += "</tr></thead><tbody>";
+            sheetResults.forEach(function (result) {
+              outputHtml += "<tr>";
+              result.rowData.forEach(function (cell) {
+                outputHtml += "<td>" + (cell !== undefined ? cell : "") + "</td>";
+              });
+              outputHtml += `<td class="checkbox-column"><input type="checkbox" class="custom-checkbox" data-row="${result.rowIndex}" data-sheet="${sheet.sheetName}"></td>`;
+              outputHtml += "</tr>";
+            });
+            outputHtml += "</tbody></table>";
+          }
+        });
+
+        if (outputHtml === "") {
+          outputHtml = "<p class='error'>Nenhum resultado encontrado para <strong>" + term + "</strong>.</p>";
+        }
+      }
+      document.getElementById("results").innerHTML = outputHtml;
+
+      // After rendering, fetch saved checkbox state from the backend and update the checkboxes.
+      fetch('/saved-data')
+        .then(response => response.json())
+        .then(savedData => {
+          document.querySelectorAll('.custom-checkbox').forEach(function (checkbox) {
+            const sheetName = checkbox.getAttribute('data-sheet');
+            const rowIndex = checkbox.getAttribute('data-row');
+            // Find a saved record for this checkbox.
+            const found = savedData.find(item => item.sheetName === sheetName && item.rowIndex.toString() === rowIndex);
+            if (found) {
+              checkbox.checked = found.isChecked;
+            }
+          });
+        })
+        .catch(err => console.error("Error fetching saved data:", err));
+
+      // Add change event listeners to each checkbox to trigger saving on the backend.
+      document.querySelectorAll('.custom-checkbox').forEach(function (checkbox) {
+        checkbox.addEventListener('change', function() {
+          const sheetName = this.getAttribute('data-sheet');
+          const rowIndex = this.getAttribute('data-row');
+          const isChecked = this.checked;
+
+          fetch('/save-row', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ sheetName, rowIndex, isChecked }),
+          })
+            .then(response => response.json())
+            .then(data => console.log('Saved:', data))
+            .catch(error => console.error('Error:', error));
+        });
+      });
+    });
+  </script>
+</body>
+</html>
