@@ -21,7 +21,6 @@
   <div class="container">
     <h1>Pesquisa de Dados em Planilha</h1>
     <p>Selecione um arquivo do Excel e pesquise por um número ou uma palavra específica.</p>
-    
     <div class="file-input-container">
       <label for="excel-file" class="custom-file-input">Selecione um arquivo .xlsx</label>
       <input type="file" id="excel-file" accept=".xls, .xlsx" />
@@ -29,19 +28,19 @@
     
     <input type="text" id="search-input" placeholder="Digite um termo..." />
     <button id="search-btn">Pesquisar</button>
-    
+    <button id="save-btn">Salvar Arquivo Atualizado</button>
+
     <div id="results"></div>
   </div>
 
   <script>
-    // Toggle dark mode styling.
     document.getElementById('darkModeToggle').addEventListener('change', function() {
       document.body.classList.toggle('dark-mode', this.checked);
     });
 
     let excelData = [];
+    let workbook = null;
 
-    // Load the Excel file and convert to JSON.
     document.getElementById("excel-file").addEventListener("change", function(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -49,7 +48,7 @@
       const reader = new FileReader();
       reader.onload = function(e) {
         const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
+        workbook = XLSX.read(data, { type: 'array' });
         
         excelData = [];
         workbook.SheetNames.forEach(function(sheetName) {
@@ -68,7 +67,6 @@
       reader.readAsArrayBuffer(file);
     });
 
-    // Search, render results, and load saved checkbox states.
     document.getElementById("search-btn").addEventListener("click", function () {
       const term = document.getElementById("search-input").value.toLowerCase().trim();
       let outputHtml = "";
@@ -96,7 +94,7 @@
               for (let col = 0; col < sheet.data[0].length; col++) {
                 outputHtml += "<th>Coluna " + (col + 1) + "</th>";
               }
-              outputHtml += "<th class='checkbox-header'>Marcar</th>"; // "Marcar" column header
+              outputHtml += "<th class='checkbox-header'>Marcar</th>";
             }
             outputHtml += "</tr></thead><tbody>";
             sheetResults.forEach(function (result) {
@@ -117,42 +115,48 @@
       }
       document.getElementById("results").innerHTML = outputHtml;
 
-      // After rendering, fetch saved checkbox state from the backend and update the checkboxes.
-      fetch('/saved-data')
-        .then(response => response.json())
-        .then(savedData => {
-          document.querySelectorAll('.custom-checkbox').forEach(function (checkbox) {
-            const sheetName = checkbox.getAttribute('data-sheet');
-            const rowIndex = checkbox.getAttribute('data-row');
-            // Find a saved record for this checkbox.
-            const found = savedData.find(item => item.sheetName === sheetName && item.rowIndex.toString() === rowIndex);
-            if (found) {
-              checkbox.checked = found.isChecked;
-            }
-          });
-        })
-        .catch(err => console.error("Error fetching saved data:", err));
-
-      // Add change event listeners to each checkbox to trigger saving on the backend.
       document.querySelectorAll('.custom-checkbox').forEach(function (checkbox) {
         checkbox.addEventListener('change', function() {
           const sheetName = this.getAttribute('data-sheet');
           const rowIndex = this.getAttribute('data-row');
           const isChecked = this.checked;
 
-          fetch('/save-row', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ sheetName, rowIndex, isChecked }),
-          })
-            .then(response => response.json())
-            .then(data => console.log('Saved:', data))
-            .catch(error => console.error('Error:', error));
+          const sheet = excelData.find(sheet => sheet.sheetName === sheetName);
+          if (sheet) {
+            sheet.data[rowIndex][sheet.data[rowIndex].length] = isChecked ? 'Correto' : 'Incorreto';
+          }
+
+          if (sheet) {
+            workbook.Sheets[sheet.sheetName] = XLSX.utils.aoa_to_sheet(sheet.data);
+          }
         });
       });
     });
+
+    document.getElementById("save-btn").addEventListener("click", function() {
+      if (!workbook) {
+        alert("Nenhum arquivo carregado para salvar.");
+        return;
+      }
+      
+      excelData.forEach(sheet => {
+        workbook.Sheets[sheet.sheetName] = XLSX.utils.aoa_to_sheet(sheet.data);
+      });
+      
+      const updatedExcelData = XLSX.write(workbook, { bookType: "xlsx", type: "binary" });
+      const blob = new Blob([s2ab(updatedExcelData)], { type: "application/octet-stream" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "updated_file.xlsx";
+      link.click();
+    });
+
+    function s2ab(s) {
+      const buf = new ArrayBuffer(s.length);
+      const view = new Uint8Array(buf);
+      for (let i = 0; i < s.length; i++) view[i] = s.charCodeAt(i) & 0xFF;
+      return buf;
+    }
   </script>
 </body>
 </html>
